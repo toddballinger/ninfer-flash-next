@@ -5,8 +5,10 @@ import struct
 import pytest
 import torch
 
+from tools.artifact.formats import DIRECT_FORMATS, INT64, NUMERIC_FORMATS, get_format
 from tools.artifact.layouts import (
     block_scale_geometry,
+    encoded_size,
 )
 from tools.artifact.codecs.direct import decode_direct, encode_direct
 from tools.artifact.codecs.nvfp4 import decode_nvfp4_words, encode_nvfp4
@@ -50,6 +52,15 @@ def _signed_word(word: int, bits: int) -> int:
             "i",
             torch.int32,
         ),
+        (
+            "int64",
+            torch.tensor(
+                (0, -1, -(1 << 63), (1 << 63) - 1), dtype=torch.int64
+            ),
+            (0, -1, -(1 << 63), (1 << 63) - 1),
+            "q",
+            torch.int64,
+        ),
     ],
 )
 def test_direct_layout_preserves_exact_little_endian_words(
@@ -64,6 +75,13 @@ def test_direct_layout_preserves_exact_little_endian_words(
     if format_name == "bf16":
         with pytest.raises(TypeError):
             encode_direct(tensor.float(), format_name)
+
+
+def test_int64_is_registered_and_uses_eight_bytes_per_element():
+    assert get_format("int64") is INT64
+    assert DIRECT_FORMATS["int64"] is INT64
+    assert NUMERIC_FORMATS["int64"] is INT64
+    assert encoded_size("contiguous_le_v1", "int64", (3,)) == 24
 
 
 @pytest.mark.parametrize(

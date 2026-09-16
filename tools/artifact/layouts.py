@@ -77,7 +77,9 @@ class RowScaleGeometry:
     payload_bytes: int
 
 
-CONTIGUOUS_LE_V1 = Layout("contiguous_le_v1", 256, frozenset(("bf16", "fp32", "int32")))
+CONTIGUOUS_LE_V1 = Layout(
+    "contiguous_le_v1", 256, frozenset(("bf16", "fp32", "int32", "int64"))
+)
 ROW_SPLIT_K128_V1 = Layout(
     "row_split_k128_v1",
     256,

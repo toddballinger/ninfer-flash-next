@@ -49,6 +49,7 @@ NumericFormat: TypeAlias = DirectFormat | QuantFormat | Nvfp4Format | Fp8RowForm
 BF16 = DirectFormat("bf16", 2)
 FP32 = DirectFormat("fp32", 4)
 INT32 = DirectFormat("int32", 4)
+INT64 = DirectFormat("int64", 8)
 
 Q4_G64_FP16 = QuantFormat("q4_g64_fp16", 4, 64, -8, 7)
 Q5_G64_FP16 = QuantFormat("q5_g64_fp16", 5, 64, -16, 15)
@@ -58,7 +59,9 @@ NVFP4 = Nvfp4Format("nvfp4", 16)
 FP8_E4M3FN_ROW_BF16 = Fp8RowFormat("fp8_e4m3fn_row_bf16")
 
 
-DIRECT_FORMATS = MappingProxyType({item.name: item for item in (BF16, FP32, INT32)})
+DIRECT_FORMATS = MappingProxyType(
+    {item.name: item for item in (BF16, FP32, INT32, INT64)}
+)
 QUANT_FORMATS = MappingProxyType(
     {item.name: item for item in (Q4_G64_FP16, Q5_G64_FP16, Q6_G64_FP16, Q8_G32_FP16)}
 )
@@ -141,6 +144,7 @@ __all__ = [
     "BF16",
     "FP32",
     "INT32",
+    "INT64",
     "Q4_G64_FP16",
     "Q5_G64_FP16",
     "Q6_G64_FP16",

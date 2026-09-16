@@ -145,7 +145,12 @@ class PrepareRequest:
 
 
 Method = Callable[[PrepareRequest], PreparedMethod]
-_DIRECT_DTYPES = {"bf16": torch.bfloat16, "fp32": torch.float32, "int32": torch.int32}
+_DIRECT_DTYPES = {
+    "bf16": torch.bfloat16,
+    "fp32": torch.float32,
+    "int32": torch.int32,
+    "int64": torch.int64,
+}
 
 
 def _preflight(request: PrepareRequest, *, values: bool = True) -> None:
@@ -167,7 +172,7 @@ def _preflight(request: PrepareRequest, *, values: bool = True) -> None:
 
 
 def cast_direct(request: PrepareRequest) -> PreparedMethod:
-    """Convert values at the explicit target BF16/FP32/INT32 boundary."""
+    """Convert values at the explicit target BF16/FP32/INT32/INT64 boundary."""
     if not isinstance(get_format(request.target.format), DirectFormat):
         raise ValueError("cast_direct requires a direct target format")
     _preflight(request)

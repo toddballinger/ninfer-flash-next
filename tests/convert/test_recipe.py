@@ -268,3 +268,25 @@ def test_private_component_storage_cannot_be_packed_with_target_weights():
     prepared = shared.prepare(device="cpu")
     assert len(prepared.weights) == 1
     assert prepared.bindings["draft"] == prepared.bindings["target"]
+
+
+def test_cast_direct_writes_exact_signed_int64_without_narrowing(tmp_path):
+    values = torch.tensor(
+        [-(1 << 40), -1, 0, (1 << 31) + 17, (1 << 40)], dtype=torch.int64
+    )
+    model = Model({"text": {"config": {}}})
+    model.add(
+        Parameter(
+            "semantic",
+            tuple(values.shape),
+            array_source(values, "semantic"),
+            direct_format="int64",
+        )
+    )
+    prepared = Recipe(model).prepare(device="cpu", rows_per_chunk=2)
+    path = tmp_path / "int64.ninfer"
+    _write(path, model, prepared)
+    with Artifact(path) as artifact:
+        obj = artifact.object(prepared.weights[0].spec.id)
+        assert obj.format == "int64" and obj.bytes == values.numel() * 8
+        assert artifact.read_object(obj.id) == struct.pack("<5q", *values.tolist())
