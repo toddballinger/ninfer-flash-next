@@ -29,6 +29,18 @@ std::vector<std::int32_t> HostValues::integers() const {
     return out;
 }
 
+std::vector<std::int64_t> HostValues::integers64() const {
+    if (format != QType::INT64 || data.size() != checked_mul(elements, 8, "integer64 values")) {
+        throw ArtifactError("semantic table requires INT64 values");
+    }
+    std::vector<std::int64_t> out;
+    out.reserve(static_cast<std::size_t>(elements));
+    for (std::size_t i = 0; i < elements; ++i) {
+        out.push_back(std::bit_cast<std::int64_t>(read_u64_le(data.data() + i * 8)));
+    }
+    return out;
+}
+
 Binder::Binder(const Reader& reader)
     : reader_(reader), demands_(reader.directory().objects.size()) {}
 
@@ -57,7 +69,8 @@ ParameterReference Binder::binding(std::string name, const Binding& binding, Sha
         if (residency == Residency::Device) {
             require_device(part.object);
         } else if (residency == Residency::Host) {
-            (void)host_object(part.object);
+            reader_.validate_object(part.object);
+            demands_.at(part.object.index).host = true;
         }
     }
     return {std::move(name), std::move(shape), binding, residency};
@@ -88,11 +101,12 @@ void Binder::require_device(ObjectHandle object, std::uint64_t alignment) {
 std::span<const std::byte> Binder::host_object(ObjectHandle object) {
     reader_.validate_object(object);
     auto& demand = demands_.at(object.index);
-    if (!demand.host) {
+    if (!demand.host_loaded) {
         demand.host_data = reader_.read_object(object);
         read_bytes_      = checked_add(read_bytes_, demand.host_data.size(), "Host read bytes");
-        demand.host      = true;
+        demand.host_loaded = true;
     }
+    demand.host = true;
     return demand.host_data;
 }
 
@@ -116,6 +130,8 @@ HostValues Binder::values(const Binding& binding, std::optional<QType> format) {
         word_bytes = 2;
     } else if (out.format == QType::FP32 || out.format == QType::INT32) {
         word_bytes = 4;
+    } else if (out.format == QType::INT64) {
+        word_bytes = 8;
     } else {
         throw ArtifactError("owning Host values require a direct numeric format");
     }
@@ -171,9 +187,17 @@ MaterializationPlan Binder::finish() && {
             plan.device_capacity_bytes = checked_add(offset, geometry.bytes, "device capacity");
         }
         if (demand.host) {
+            if (!demand.host_loaded) {
+                const ObjectHandle handle{i};
+                demand.host_data   = reader_.read_object(handle);
+                read_bytes_        = checked_add(read_bytes_, demand.host_data.size(),
+                                                 "Host read bytes");
+                demand.host_loaded = true;
+            }
             plan.host_objects.push_back({ObjectHandle{i}, std::move(demand.host_data)});
         }
     }
+    plan.prior_read_bytes = read_bytes_;
     return plan;
 }
 

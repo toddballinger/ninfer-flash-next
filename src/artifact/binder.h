@@ -26,6 +26,7 @@ struct HostValues {
 
     [[nodiscard]] float scalar_f32() const;
     [[nodiscard]] std::vector<std::int32_t> integers() const;
+    [[nodiscard]] std::vector<std::int64_t> integers64() const;
 };
 
 // Collects selected logical demands; neither physical object IDs nor whole-artifact profiles
@@ -55,6 +56,7 @@ private:
     struct Demand {
         bool device             = false;
         bool host               = false;
+        bool host_loaded        = false;
         std::uint64_t alignment = 256;
         std::vector<std::byte> host_data;
     };

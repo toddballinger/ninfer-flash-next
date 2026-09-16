@@ -3,7 +3,8 @@ add_library(ninfer_model_loading STATIC registry.cpp)
 ninfer_internal_includes(ninfer_model_loading)
 target_link_libraries(ninfer_model_loading PUBLIC ninfer_artifact ninfer_text ninfer_ops)
 target_sources(ninfer_model_loading PRIVATE
-  "${CMAKE_CURRENT_LIST_DIR}/qwen4_exp/config.cpp")
+  "${CMAKE_CURRENT_LIST_DIR}/qwen4_exp/config.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/qwen4_exp/bindings.cpp")
 
 add_library(ninfer_model_runtime STATIC)
 ninfer_internal_includes(ninfer_model_runtime)

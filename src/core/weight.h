@@ -16,6 +16,7 @@ enum class QType : std::uint16_t {
     INT32               = 6,
     NVFP4               = 7,
     FP8_E4M3FN_ROW_BF16 = 8,
+    INT64               = 9,
 };
 
 enum class QuantLayout : std::uint16_t {

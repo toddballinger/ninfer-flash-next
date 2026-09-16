@@ -39,8 +39,10 @@ std::uint64_t word_bytes(QType format) {
     case QType::FP32:
     case QType::INT32:
         return 4;
+    case QType::INT64:
+        return 8;
     default:
-        throw std::invalid_argument("direct weight requires BF16, FP32 or INT32");
+        throw std::invalid_argument("direct weight requires BF16, FP32, INT32 or INT64");
     }
 }
 
@@ -52,6 +54,8 @@ DType direct_dtype(QType format) {
         return DType::FP32;
     case QType::INT32:
         return DType::I32;
+    case QType::INT64:
+        return DType::I64;
     default:
         throw std::invalid_argument("quantized weight cannot be bound as a direct tensor");
     }
