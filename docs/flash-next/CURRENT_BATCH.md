@@ -79,6 +79,6 @@ Before CUDA execution tests:
 
 - Batch 3C1 implementation commit: c67f31f71b13d4a0fba199fe86348378e8743fbe
 - GitHub publication: PASS
-- Published branch: lash-next/batch3c-hyperconnection-reference
+- Published branch: flash-next/batch3c-hyperconnection-reference
 - Next batch: Batch 3C2 — Qwen4Exp HyperConnection executor
 - Next batch status: deferred; not started
