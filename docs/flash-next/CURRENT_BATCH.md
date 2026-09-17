@@ -1,91 +1,76 @@
-# Batch 3B2 — Qwen4Exp recipe and CLI
+# Batch 3C1 — Qwen4Exp HyperConnection primitives
 
-- Base: `7d31e56796a9e8d85ec3a4f0b46174841cfd1c0b`
-- Target branch: `flash-next/batch3b2-recipe-cli`
+- Base: `97a5a9b7acb26aa3a852ed8504d77ad5c9a71bea`
+- Branch: `flash-next/batch3c-hyperconnection-reference`
 
 ## Scope
 
-Converter-only; no C++/CUDA/runtime/GPU/service.
+Implement only the reusable mathematical primitives required by the
+Qwen4Exp HyperConnection reference equations.
 
-## Allowed files
+No Qwen4Exp execution/program integration in 3C1.
 
-- `tools/convert/official_recipes.py`
-- `tools/convert/qwen4_exp.py`
-- `tools/convert/__main__.py`
-- `tests/convert/test_qwen4_exp.py`
-- `tests/convert/test_cli.py`
+## Semantics
 
-## Forbidden files
+- initial repeat `[H,T] -> [4H,T]`
+- four independent RMSNorm groups of width `H`
+- `SiLU(x / hc_count)`
+- read/mix:
+  `mean_streams(sigmoid(logits) * normalized)`
+- injection:
+  `hyper += block_output * (2 * sigmoid(inject_logits / hc_count))`
 
-- `tools/convert/methods.py`
-- `tools/convert/recipe.py`
-- `tools/convert/sources/modelopt.py`
+Canonical Flash-Next geometry:
 
-## Decisions
+- `hc_count = 4`
+- `hidden_size = 2560`
+- `expanded_width = 10240`
+- `hc_lowrank = 320`
 
-- routed ModelOpt `input_divisor` present => AllowA4
-- `input_divisor` absent => A16Only
-- never invent a divisor
-- preserve `None` in lazy Qwen4Exp source
-- routed Parameters expose mathematical input uses
+## Files
 
-## Recipe
+- `include/ninfer/ops/hyper_connection.h`
+- `src/ops/launcher/hyper_connection.h`
+- `src/ops/launcher/hyper_connection.cu`
+- `src/ops/wrapper/hyper_connection.cpp`
+- `src/ops/basic_sources.cmake`
+- `tests/ops/test_hyper_connection.cpp`
+- `tests/ops/tests.cmake`
 
-- token embedding: `q8_g32_fp16` / `grouped_absmax`
-- output head: `q6_g64_fp16` / `grouped_absmax`
-- routed experts: `nvfp4` / `import_encoded`
-- GDN `in_proj_a` / `in_proj_b`: `BF16` / `direct`
-- router / `shared_gate`: `BF16` / `direct`
-- other linear projections: `q8_g32_fp16` / `grouped_absmax`
-- norms / convolutions / scalars / PLE: `direct`
-- non-routed: `A16Only`
+## Explicitly deferred to 3C2
 
-## Acceptance
+- bound HyperConnection parameter preparation
+- `linear()` composition for down/up/block-inject
+- Qwen4Exp layer execution
+- final model-level mixer integration
+- PLE/GDN/QSA/MoE execution
+- full decoder/program ownership
 
-- exact assignments
-- mixed `input_scale`
-- byte/divisor preservation
-- activation aux only `AllowA4`
-- no-divisor `A16Only`
-- forced `AllowA4` failure
-- routed artifact uses
-- Qwen4Exp CLI
-- Qwen3.5 CLI regression
-- prior 3A/3B1 tests
+## GPU policy
 
-## Policy
+Compile while `ninfer-local-model.service` remains running.
 
-- Luna orchestration
-- local-worker routine implementation/tests/git
-- Sol only explicit review
-- GPU agents sequential
-- no GPU tests
-
-## Deferred
-
-- Qwen4Exp runtime/program
-- HyperConnection/PLE/GDN/QSA execution
-- sparse-MoE runtime/kernels
-- CUDA shape/kernel
-- serving/benchmarking/GPU validation
-
-## Implementation notes
-
-- converter CLI entrypoint is `tools/convert/__main__.py`
-- routed expert `gate` / `up` inputs are `text/layers/L/ffn_input`
-- routed expert `down` input is `text/layers/L/moe/experts/E/product`
-- Qwen4Exp source factories preserve genuine `input_divisor=None`
-- official recipe name is `qwen4_exp_nvfp4`
+Before CUDA execution tests:
+1. stop `ninfer-local-model.service`
+2. run bounded HyperConnection GPU tests
+3. restart service
+4. verify service/model health
 
 ## Validation
 
-Batch 3B2 implementation validation:
-- `git diff --check`: PASS
-- Batch 3B2 acceptance tests: 8 passed
-- focused converter suite: 53 passed, 1 existing PyTorch buffer warning
-- recipe coverage audit: PASS
-- complete `tests/convert` CPU-only regression suite: PASS
-- CUDA-specific quantization branches intentionally excluded from Batch 3B2 validation because this milestone is converter-only and the RTX 5080 remains allocated to `ninfer-local-model.service`
-- no GPU/service changes were required
-- `ninfer-local-model.service` remained running and untouched
-- implementation scope remained converter-only
+- source hygiene (`git diff --check`): PASS
+- HyperConnection primitive CUDA oracle tests: PASS
+- canonical Flash-Next geometry (`C=4`, `H=2560`, `R=320`): PASS
+- CUDA Graph capture/instantiate/replay: PASS
+- GPU test performed with live NInfer service stopped
+- `ninfer-local-model.service` restarted successfully
+- `/v1/models` health check after restoration: PASS
+- ccache enabled for C, C++, and CUDA compilation
+
+## Publication state
+
+- Implementation status: COMPLETE
+- Validation status: COMPLETE
+- Commit: NOT DONE before publication
+- Push: NOT DONE before publication
+- Next milestone: Batch 3C2 — Qwen4Exp HyperConnection executor (deferred; not started)

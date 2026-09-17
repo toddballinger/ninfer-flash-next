@@ -7,6 +7,7 @@ set(ninfer_op_tests
   rmsnorm
   rmsnorm_pack_tail
   gated_rmsnorm
+  hyper_connection
   l2norm
   gated_delta_net
   causal_conv1d_silu
