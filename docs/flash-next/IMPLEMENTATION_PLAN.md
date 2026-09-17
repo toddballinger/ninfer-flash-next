@@ -310,3 +310,18 @@ Performance numbers without runtime configuration are not comparable.
 ## 31. Definition of completion
 
 Flash-Next support is complete only when Qwen4Exp config is validated, canonical tensors bind, HyperConnection/PLE/GDN/QSA/MoE/shared-expert semantics match reference, all persistent state participates in sequence semantics, end-to-end deterministic inference succeeds, existing architectures regress cleanly, RTX 5080 memory use is understood, 32K and 64K are stable, 128K is validated if the measured hardware budget permits, and sustained OpenClaw-style decode is practically usable.
+
+## 32. Batch 3B2 — Qwen4Exp recipe and CLI (converter-only)
+
+Converter-only milestone on target branch `flash-next/batch3b2-recipe-cli` (base `7d31e56796a9e8d85ec3a4f0b46174841cfd1c0b`). Adds the Qwen4Exp official recipe, recipe mapping, converter CLI, and CPU-only converter tests.
+
+Scope is converter-only: no C++, CUDA, runtime, GPU, or service changes in this batch.
+
+Explicitly deferred to later milestones (runtime/CUDA work):
+- Qwen4Exp runtime/program
+- HyperConnection / PLE / GDN / QSA execution
+- sparse-MoE runtime/kernels
+- CUDA shape/kernel
+- serving / benchmarking / GPU validation
+
+See `docs/flash-next/CURRENT_BATCH.md`.

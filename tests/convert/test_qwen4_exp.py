@@ -14,7 +14,9 @@ from safetensors.torch import save_file
 from tools.artifact.reader import Artifact
 from tools.artifact.tensor_output import TensorOutput
 from tools.artifact.writer import ArtifactWriter
+from tools.convert.methods import import_encoded
 from tools.convert.model import Model
+from tools.convert.official_recipes import qwen4_exp_nvfp4
 from tools.convert.qwen4_exp import build_model, text_config
 from tools.convert.recipe import Recipe
 from tools.convert.sources.safetensors import SafetensorsSource
@@ -713,3 +715,208 @@ def test_batch3a_rejects_unsupported_components_and_bad_sources(tmp_path):
     ) as source:
         with pytest.raises(ValueError, match="expected source shape"):
             build_model(source)
+
+
+# --- Batch 3B2: official recipe + activation-use contract -----------------
+
+def _single_parameter_model(model, name):
+    """Create a minimal model containing one real Qwen4Exp Parameter."""
+    minimal = Model({"text": {"config": model.config}})
+    minimal.add(model.parameters[name])
+    return minimal
+
+
+def test_batch3b2_official_recipe_assignments_and_mixed_activation_policy():
+    # Layer 0 receives ModelOpt input_scale in this fixture; later layers
+    # intentionally do not.  One checkpoint therefore exercises both policies.
+    with _ModelOptStore(input_scale=True) as store:
+        model = build_model(store)
+        recipe = Recipe(model)
+        qwen4_exp_nvfp4(model, recipe, {"base": store})
+
+        def selection(name):
+            choices = recipe.selections[name]
+            assert len(choices) == 1
+            return choices[0]
+
+        assert selection("text/token_embedding").format == "q8_g32_fp16"
+        assert selection("text/token_embedding").method.__name__ == "grouped_absmax"
+
+        assert selection("text/output_head").format == "q6_g64_fp16"
+        assert selection("text/output_head").method.__name__ == "grouped_absmax"
+
+        expert0 = "text/layers/0/moe/experts/0/gate"
+        expert1 = "text/layers/1/moe/experts/0/gate"
+
+        assert selection(expert0).format == "nvfp4"
+        assert selection(expert0).method is import_encoded
+        assert selection(expert1).format == "nvfp4"
+        assert selection(expert1).method is import_encoded
+
+        # Frozen direct-BF16 exceptions.
+        for name in (
+            "text/layers/0/gdn/in_proj_a",
+            "text/layers/0/gdn/in_proj_b",
+            "text/layers/0/moe/router",
+            "text/layers/0/moe/shared_gate",
+        ):
+            assert selection(name).format == "bf16"
+            assert selection(name).method.__name__ == "cast_direct"
+
+        # Ordinary non-routed projection.
+        assert selection("text/layers/0/gdn/qkv").format == "q8_g32_fp16"
+        assert selection("text/layers/0/gdn/qkv").method.__name__ == "grouped_absmax"
+
+        # PLE remains direct, despite containing matrix-valued tensors.
+        assert selection("text/layers/1/ple/key").format == "bf16"
+        assert selection("text/layers/1/ple/key").method.__name__ == "cast_direct"
+
+        input0 = "text/layers/0/ffn_input"
+        input1 = "text/layers/1/ffn_input"
+
+        assert model.parameters[expert0].inputs == (input0,)
+        assert model.parameters[expert1].inputs == (input1,)
+
+        assert recipe.policies[(expert0, input0)] == "AllowA4"
+        assert recipe.policies[(expert1, input1)] == "A16Only"
+
+
+def test_batch3b2_routed_expert_mathematical_inputs():
+    with _ModelOptStore() as store:
+        model = build_model(store)
+
+        for role in ("gate", "up"):
+            name = f"text/layers/0/moe/experts/17/{role}"
+            assert model.parameters[name].inputs == ("text/layers/0/ffn_input",)
+
+        down = "text/layers/0/moe/experts/17/down"
+        assert model.parameters[down].inputs == (
+            "text/layers/0/moe/experts/17/product",
+        )
+
+
+def test_batch3b2_input_divisor_presence_and_exact_reciprocal():
+    name = "text/layers/0/moe/experts/0/gate"
+
+    with _ModelOptStore(input_scale=True) as store:
+        model = build_model(store)
+        source = model.parameters[name].source
+
+        assert source.input_divisor is not None
+        assert source.input_divisor() == struct.pack("<f", 0.25)
+
+        encoded = source.read_encoded(0, 1)
+        assert encoded.format == "nvfp4"
+        assert encoded.weight_divisor == struct.pack("<f", 0.5)
+
+    with _ModelOptStore(input_scale=False) as store:
+        model = build_model(store)
+        source = model.parameters[name].source
+
+        # This is the Batch 3B2 semantic correction: absence stays absence,
+        # rather than a callback that fails only when invoked.
+        assert source.input_divisor is None
+
+
+def test_batch3b2_allowa4_emits_use_and_activation_auxiliary():
+    name = "text/layers/0/moe/experts/0/gate"
+    input_name = "text/layers/0/ffn_input"
+
+    with _ModelOptStore(input_scale=True) as store:
+        full = build_model(store)
+        model = _single_parameter_model(full, name)
+        source = model.parameters[name].source
+
+        recipe = Recipe(model)
+        recipe.assign(
+            name,
+            format="nvfp4",
+            method=import_encoded,
+            source=source,
+            activation_policy="AllowA4",
+        )
+
+        prepared = recipe.prepare(device="cpu", rows_per_chunk=128)
+
+        uses = [
+            use
+            for use in prepared.uses
+            if use["parameter"] == name and use["input"] == input_name
+        ]
+        assert len(uses) == 1
+        use = uses[0]
+
+        assert use["activation_policy"] == "AllowA4"
+        assert set(use["auxiliaries"]) == {"activation_input_divisor"}
+
+        aux_id = use["auxiliaries"]["activation_input_divisor"]["object"]
+        auxiliary = {
+            spec.id: (spec, data) for spec, data in prepared.auxiliaries
+        }[aux_id]
+
+        spec, data = auxiliary
+        assert spec.format == "fp32"
+        assert spec.shape == ()
+        assert data == struct.pack("<f", 0.25)
+
+
+def test_batch3b2_a16only_succeeds_without_activation_auxiliary():
+    name = "text/layers/0/moe/experts/0/gate"
+    input_name = "text/layers/0/ffn_input"
+
+    with _ModelOptStore(input_scale=False) as store:
+        full = build_model(store)
+        model = _single_parameter_model(full, name)
+        source = model.parameters[name].source
+
+        assert source.input_divisor is None
+
+        recipe = Recipe(model)
+        recipe.assign(
+            name,
+            format="nvfp4",
+            method=import_encoded,
+            source=source,
+            activation_policy="A16Only",
+        )
+
+        prepared = recipe.prepare(device="cpu", rows_per_chunk=128)
+
+        uses = [
+            use
+            for use in prepared.uses
+            if use["parameter"] == name and use["input"] == input_name
+        ]
+        assert uses == [
+            {
+                "parameter": name,
+                "input": input_name,
+                "activation_policy": "A16Only",
+            }
+        ]
+
+        assert prepared.auxiliaries == ()
+
+
+def test_batch3b2_forced_allowa4_without_divisor_fails():
+    name = "text/layers/0/moe/experts/0/gate"
+
+    with _ModelOptStore(input_scale=False) as store:
+        full = build_model(store)
+        model = _single_parameter_model(full, name)
+        source = model.parameters[name].source
+
+        recipe = Recipe(model)
+        recipe.assign(
+            name,
+            format="nvfp4",
+            method=import_encoded,
+            source=source,
+            activation_policy="AllowA4",
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="supply an activation divisor for AllowA4",
+        ):
+            recipe.prepare(device="cpu", rows_per_chunk=128)

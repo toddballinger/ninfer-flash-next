@@ -12,7 +12,8 @@ from collections.abc import Mapping
 from .official_recipes import RECIPES
 from .pipeline import convert
 from .proposal import DEFAULT_RANKING, add_official_proposal
-from .qwen3_5 import build_model
+from .qwen3_5 import build_model as build_qwen3_5_model
+from .qwen4_exp import build_model as build_qwen4_exp_model
 from .recipe import Recipe
 from .sources.safetensors import SafetensorsSource
 
@@ -81,6 +82,31 @@ def _function(value: str):
     return result
 
 
+def _build_model(base, *, components, companions, resource_overrides):
+    """Dispatch the logical model adapter from checkpoint identity."""
+    raw = base.config.get("text_config", base.config)
+    architectures = base.config.get("architectures")
+
+    qwen4_exp = (
+        architectures == ["Qwen4ExpForConditionalGeneration"]
+        or raw.get("model_type") == "qwen4_exp_text"
+    )
+
+    if qwen4_exp:
+        if companions:
+            raise ValueError("Qwen4Exp converter does not support companion components")
+        if resource_overrides:
+            raise ValueError("Qwen4Exp converter does not support resource overrides")
+        return build_qwen4_exp_model(base, components=components)
+
+    return build_qwen3_5_model(
+        base,
+        components=components,
+        companions=companions,
+        resource_overrides=resource_overrides,
+    )
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -143,7 +169,7 @@ def main(argv=None):
         companions = {
             key: sources[key] for key in ("dflash", "dflash2") if key in components
         }
-        model = build_model(
+        model = _build_model(
             base,
             components=components,
             companions=companions,

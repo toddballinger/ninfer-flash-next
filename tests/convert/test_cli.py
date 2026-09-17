@@ -116,3 +116,145 @@ def configure(model, recipe, sources):
             artifact.directory.bindings["text/layers/0/mlp/up"], artifact.by_id
         )[0][0]
         assert gate != up
+
+
+def test_qwen4_exp_builder_dispatch(monkeypatch):
+    import tools.convert.__main__ as cli
+
+    qwen4_sentinel = object()
+    qwen35_sentinel = object()
+    calls = []
+
+    def qwen4_builder(base, *, components):
+        calls.append(("qwen4", base, components))
+        return qwen4_sentinel
+
+    def qwen35_builder(
+        base,
+        *,
+        components,
+        companions,
+        resource_overrides,
+    ):
+        calls.append(
+            (
+                "qwen3_5",
+                base,
+                components,
+                companions,
+                resource_overrides,
+            )
+        )
+        return qwen35_sentinel
+
+    monkeypatch.setattr(cli, "build_qwen4_exp_model", qwen4_builder)
+    monkeypatch.setattr(cli, "build_qwen3_5_model", qwen35_builder)
+
+    class Base:
+        pass
+
+    qwen4 = Base()
+    qwen4.config = {
+        "architectures": ["Qwen4ExpForConditionalGeneration"],
+        "text_config": {"model_type": "qwen4_exp_text"},
+    }
+
+    result = cli._build_model(
+        qwen4,
+        components=("text",),
+        companions={},
+        resource_overrides={},
+    )
+
+    assert result is qwen4_sentinel
+    assert calls == [("qwen4", qwen4, ("text",))]
+
+
+def test_qwen35_builder_dispatch_regression(monkeypatch):
+    import tools.convert.__main__ as cli
+
+    qwen35_sentinel = object()
+    calls = []
+
+    def qwen4_builder(base, *, components):
+        raise AssertionError("Qwen4Exp builder must not receive Qwen3.5")
+
+    def qwen35_builder(
+        base,
+        *,
+        components,
+        companions,
+        resource_overrides,
+    ):
+        calls.append(
+            (
+                base,
+                components,
+                companions,
+                resource_overrides,
+            )
+        )
+        return qwen35_sentinel
+
+    monkeypatch.setattr(cli, "build_qwen4_exp_model", qwen4_builder)
+    monkeypatch.setattr(cli, "build_qwen3_5_model", qwen35_builder)
+
+    class Base:
+        pass
+
+    qwen35 = Base()
+    qwen35.config = {
+        "architectures": ["Qwen3_5ForCausalLM"],
+        "model_type": "qwen3_5_text",
+    }
+
+    companions = {"dflash": object()}
+    overrides = {"chat_template.jinja": "custom.jinja"}
+
+    result = cli._build_model(
+        qwen35,
+        components=("text", "dflash"),
+        companions=companions,
+        resource_overrides=overrides,
+    )
+
+    assert result is qwen35_sentinel
+    assert calls == [
+        (
+            qwen35,
+            ("text", "dflash"),
+            companions,
+            overrides,
+        )
+    ]
+
+
+def test_qwen4_exp_builder_rejects_qwen35_only_cli_features():
+    import tools.convert.__main__ as cli
+
+    class Base:
+        pass
+
+    base = Base()
+    base.config = {
+        "architectures": ["Qwen4ExpForConditionalGeneration"],
+        "text_config": {"model_type": "qwen4_exp_text"},
+    }
+
+    import pytest
+
+    with pytest.raises(ValueError, match="companion components"):
+        cli._build_model(
+            base,
+            components=("text",),
+            companions={"dflash": object()},
+            resource_overrides={},
+        )
+
+    with pytest.raises(ValueError, match="resource overrides"):
+        cli._build_model(
+            base,
+            components=("text",),
+            companions={},
+            resource_overrides={"chat_template.jinja": "x"},
+        )

@@ -174,10 +174,54 @@ def qwen3_8_27b_nvfp4(model, recipe, sources):
         )
 
 
+def qwen4_exp_nvfp4(model, recipe, sources):
+    """Qwen4Exp Flash-Next recipe with imported ModelOpt routed experts."""
+    if model.config.get("model_type") != "qwen4_exp_text":
+        raise ValueError("this official recipe requires Qwen4Exp mathematics")
+
+    _assign(recipe, "text/token_embedding", Q8)
+    _assign(recipe, "text/output_head", Q6)
+
+    base = sources["base"]
+
+    for name, parameter in model.parameters.items():
+        if name in ("text/token_embedding", "text/output_head"):
+            continue
+
+        # PLE tensors keep their architecture-defined direct representations.
+        if "/ple/" in name:
+            continue
+
+        # Routing/control projections remain direct BF16.
+        if name.endswith(("/moe/router", "/moe/shared_gate")):
+            continue
+        if name.endswith(("/gdn/in_proj_a", "/gdn/in_proj_b")):
+            continue
+
+        if "/moe/experts/" in name:
+            source = model.source(name, base, "nvfp4")
+            policy = "AllowA4" if source.input_divisor is not None else "A16Only"
+            recipe.assign(
+                name,
+                format="nvfp4",
+                method=import_encoded,
+                source=source,
+                activation_policy=policy,
+            )
+            continue
+
+        # All other ordinary BF16 matrices use the frozen Q8 policy.
+        # Norms, convolutions, scalar state and non-BF16 semantic tensors
+        # retain their architecture-defined direct representation.
+        if len(parameter.shape) == 2 and parameter.direct_format == "bf16":
+            _assign(recipe, name, Q8)
+
+
 RECIPES = {
     "qwen3_6_27b": qwen3_6_27b,
     "qwen3_6_27b_nvfp4": qwen3_6_27b_nvfp4,
     "qwen3_8_27b": qwen3_8_27b,
     "qwen3_8_27b_nvfp4": qwen3_8_27b_nvfp4,
     "qwen3_6_35b_a3b": qwen3_6_35b_a3b,
+    "qwen4_exp_nvfp4": qwen4_exp_nvfp4,
 }

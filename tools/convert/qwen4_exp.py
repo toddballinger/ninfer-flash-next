@@ -13,7 +13,8 @@ from __future__ import annotations
 from math import isfinite
 
 from .model import Model, Parameter
-from .sources.modelopt import modelopt_matrix_source
+from .sources.logical import LogicalSource
+from .sources.modelopt import modelopt_source
 from .sources.safetensors import SafetensorsSource, tensor_source
 
 
@@ -247,15 +248,81 @@ class _Builder:
         )
 
     def _add_modelopt(self, name, source_name, shape, *, inputs=(), direct="bf16"):
+        """Add a lazy routed expert while preserving true auxiliary absence."""
         shape = tuple(shape)
+        source_prefix = source_name.removesuffix(".weight")
+
+        def factory(selected, format=None):
+            encoded = selected.has(source_prefix + ".weight_scale_2") and selected.has(
+                source_prefix + ".weight_scale"
+            )
+            if not encoded:
+                if format is not None:
+                    raise ValueError(
+                        f"{name}: selected source does not provide {format} encoded rows"
+                    )
+                return tensor_source(selected, source_name, shape)
+
+            if format not in (None, "nvfp4"):
+                raise ValueError(
+                    f"{name}: ModelOpt routed expert requires nvfp4 source format"
+                )
+
+            # Preserve Batch 3B1's lazy validation behaviour.  Building the
+            # logical model must not decode or validate every expert scalar;
+            # that happens only when this particular source is consumed.
+            resolved = None
+
+            def resolve():
+                nonlocal resolved
+                if resolved is None:
+                    resolved = modelopt_source(selected, source_prefix, shape)
+                return resolved
+
+            def read(begin, end):
+                return resolve().values(begin, end)
+
+            def read_encoded(begin, end):
+                reader = resolve().read_encoded
+                if reader is None:
+                    raise ValueError(
+                        f"{name}: selected source does not provide encoded rows"
+                    )
+                return reader(begin, end)
+
+            def weight_divisor():
+                reader = resolve().weight_divisor
+                if reader is None:
+                    raise ValueError(
+                        f"{name}: selected source does not provide weight_divisor"
+                    )
+                return reader()
+
+            has_input_divisor = selected.has(source_prefix + ".input_scale")
+
+            def input_divisor():
+                reader = resolve().input_divisor
+                if reader is None:
+                    raise ValueError(
+                        f"{name}: selected source does not provide input_divisor"
+                    )
+                return reader()
+
+            return LogicalSource(
+                shape,
+                f"{selected.path}:{source_name} (lazy modelopt nvfp4)",
+                read,
+                read_encoded,
+                weight_divisor,
+                input_divisor if has_input_divisor else None,
+            )
+
         self.model.add(
             Parameter(
                 name,
                 shape,
-                modelopt_matrix_source(self.store, source_name, shape),
-                lambda selected, format=None: modelopt_matrix_source(
-                    selected, source_name, shape
-                ),
+                factory(self.store),
+                factory,
                 tuple(inputs),
                 direct,
                 "routed_experts",
@@ -281,6 +348,7 @@ class _Builder:
                     (640, 2560),
                     source_shape=gate_up_shape,
                     offset=(expert * 2 + half) * gate_elements,
+                    inputs=(prefix + "/ffn_input",),
                     residency="routed_experts",
                     source_dtype="BF16",
                 )
@@ -290,6 +358,7 @@ class _Builder:
                 (2560, 640),
                 source_shape=down_shape,
                 offset=expert * down_elements,
+                inputs=(target + "/product",),
                 residency="routed_experts",
                 source_dtype="BF16",
             )
@@ -299,9 +368,24 @@ class _Builder:
         for expert in range(512):
             target = f"{prefix}/moe/experts/{expert}"
             module = f"{source}.experts.{expert}"
-            self._add_modelopt(f"{target}/gate", module + ".gate_proj.weight", (640, 2560))
-            self._add_modelopt(f"{target}/up", module + ".up_proj.weight", (640, 2560))
-            self._add_modelopt(f"{target}/down", module + ".down_proj.weight", (2560, 640))
+            self._add_modelopt(
+                f"{target}/gate",
+                module + ".gate_proj.weight",
+                (640, 2560),
+                inputs=(prefix + "/ffn_input",),
+            )
+            self._add_modelopt(
+                f"{target}/up",
+                module + ".up_proj.weight",
+                (640, 2560),
+                inputs=(prefix + "/ffn_input",),
+            )
+            self._add_modelopt(
+                f"{target}/down",
+                module + ".down_proj.weight",
+                (2560, 640),
+                inputs=(target + "/product",),
+            )
 
     def hyper_connection(self, canonical, source):
         for role, field, shape in (
