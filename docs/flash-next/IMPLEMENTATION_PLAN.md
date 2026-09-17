@@ -325,3 +325,55 @@ Explicitly deferred to later milestones (runtime/CUDA work):
 - serving / benchmarking / GPU validation
 
 See `docs/flash-next/CURRENT_BATCH.md`.
+
+## 33. Batch 3C1 / 3C2 — HyperConnection primitives and executor
+
+Batch 3C1 — Qwen4Exp HyperConnection primitives, Status: COMPLETE
+
+Implements the reusable mathematical primitives for the frozen
+HyperConnection equations; no Qwen4Exp program/runtime integration in 3C1.
+
+- initial repeat `2560 -> 10240`
+- grouped RMSNorm (four independent groups of width `2560`)
+- `SiLU(x / hc_count)`
+- low-rank read/mix: `mean_streams(sigmoid(logits) * normalized)`
+- per-block injection:
+  `hyper += block_output * (2 * sigmoid(inject_logits / hc_count))`
+
+Validation:
+
+- build: PASS
+- HyperConnection primitive CUDA oracle tests: PASS
+- canonical Flash-Next geometry (`hc_count=4`, `hidden=2560`,
+  `expanded=10240`, `lowrank=320`): PASS
+- CUDA Graph capture/instantiate/replay: PASS
+- GPU tests run with `ninfer-local-model.service` stopped; service restored
+  and `/v1/models` health-checked
+
+Published milestone head: `01850659c3addcf17926afd161998410227a24b9`
+(implementation commit `c67f31f71b13d4a0fba199fe86348378e8743fbe`; branch
+`flash-next/batch3c-hyperconnection-reference`).
+
+Batch 3C2 — Qwen4Exp HyperConnection executor, Status: NEXT / NOT STARTED
+
+Scope:
+
+- compose existing `linear()` with the 3C1 primitives
+- bound HyperConnection weights
+- initial four-stream expansion
+- per-block read/mix
+- per-block injection/update
+- final global mixer collapse
+
+Out of scope:
+
+- PLE
+- GDN
+- QSA
+- MoE
+- persistent state
+- full decoder
+- expert streaming
+- optimization-specific fused kernels
+
+See `docs/flash-next/CURRENT_BATCH.md`.
