@@ -1,7 +1,11 @@
-"""Qwen4Exp Flash-Next BF16 text config and logical checkpoint mapping.
+"""Qwen4Exp Flash-Next BF16/ModelOpt text config and logical checkpoint mapping.
 
-This adapter deliberately stops at the frozen text-backbone mathematical model.
-Runtime execution and quantized source/recipe support belong to later batches.
+This adapter stops at the frozen text-backbone mathematical model.  Routed
+experts may be supplied either as the Batch 3A fused BF16 tensors or, in a
+ModelOpt NVFP4 checkpoint, as split per-expert modules that resolve through the
+``modelopt_matrix_source`` adapter.  Non-routed parameters always use the
+decoded (direct) path.  Runtime execution and recipe support belong to later
+batches.
 """
 
 from __future__ import annotations
@@ -9,6 +13,7 @@ from __future__ import annotations
 from math import isfinite
 
 from .model import Model, Parameter
+from .sources.modelopt import modelopt_matrix_source
 from .sources.safetensors import SafetensorsSource, tensor_source
 
 
@@ -231,6 +236,73 @@ class _Builder:
             )
         )
 
+    def _modelopt_experts(self, source: str) -> bool:
+        """True when this layer's routed experts use the ModelOpt NVFP4 split layout."""
+        probe = f"{source}.experts.0.gate_proj.weight"
+        if not self.store.has(probe):
+            return False
+        prefix = probe.removesuffix(".weight")
+        return self.store.has(prefix + ".weight_scale_2") and self.store.has(
+            prefix + ".weight_scale"
+        )
+
+    def _add_modelopt(self, name, source_name, shape, *, inputs=(), direct="bf16"):
+        shape = tuple(shape)
+        self.model.add(
+            Parameter(
+                name,
+                shape,
+                modelopt_matrix_source(self.store, source_name, shape),
+                lambda selected, format=None: modelopt_matrix_source(
+                    selected, source_name, shape
+                ),
+                tuple(inputs),
+                direct,
+                "routed_experts",
+            )
+        )
+
+    def _fused_routed_experts(self, prefix, source):
+        """Batch 3A fused-tensor routed experts (frozen and unchanged)."""
+        gate_up_name = source + ".experts.gate_up_proj"
+        down_name = source + ".experts.down_proj"
+        gate_up_shape = (512, 1280, 2560)
+        down_shape = (512, 2560, 640)
+        self._check(self.store, gate_up_name, gate_up_shape, "BF16")
+        self._check(self.store, down_name, down_shape, "BF16")
+        gate_elements = 640 * 2560
+        down_elements = 2560 * 640
+        for expert in range(512):
+            target = f"{prefix}/moe/experts/{expert}"
+            for role, half in (("gate", 0), ("up", 1)):
+                self.add(
+                    f"{target}/{role}",
+                    gate_up_name,
+                    (640, 2560),
+                    source_shape=gate_up_shape,
+                    offset=(expert * 2 + half) * gate_elements,
+                    residency="routed_experts",
+                    source_dtype="BF16",
+                )
+            self.add(
+                f"{target}/down",
+                down_name,
+                (2560, 640),
+                source_shape=down_shape,
+                offset=expert * down_elements,
+                residency="routed_experts",
+                source_dtype="BF16",
+            )
+
+    def _modelopt_routed_experts(self, prefix, source):
+        """ModelOpt split NVFP4 routed experts (per-expert gate/up/down)."""
+        for expert in range(512):
+            target = f"{prefix}/moe/experts/{expert}"
+            module = f"{source}.experts.{expert}"
+            self._add_modelopt(f"{target}/gate", module + ".gate_proj.weight", (640, 2560))
+            self._add_modelopt(f"{target}/up", module + ".up_proj.weight", (640, 2560))
+            self._add_modelopt(f"{target}/down", module + ".down_proj.weight", (2560, 640))
+
     def hyper_connection(self, canonical, source):
         for role, field, shape in (
             ("norm", "hc_norm.weight", (10240,)),
@@ -294,35 +366,10 @@ class _Builder:
         ):
             self.add(f"{prefix}/moe/{role}", f"{source}.{field}", shape)
 
-        gate_up_name = source + ".experts.gate_up_proj"
-        down_name = source + ".experts.down_proj"
-        gate_up_shape = (512, 1280, 2560)
-        down_shape = (512, 2560, 640)
-        self._check(self.store, gate_up_name, gate_up_shape, "BF16")
-        self._check(self.store, down_name, down_shape, "BF16")
-        gate_elements = 640 * 2560
-        down_elements = 2560 * 640
-        for expert in range(512):
-            target = f"{prefix}/moe/experts/{expert}"
-            for role, half in (("gate", 0), ("up", 1)):
-                self.add(
-                    f"{target}/{role}",
-                    gate_up_name,
-                    (640, 2560),
-                    source_shape=gate_up_shape,
-                    offset=(expert * 2 + half) * gate_elements,
-                    residency="routed_experts",
-                    source_dtype="BF16",
-                )
-            self.add(
-                f"{target}/down",
-                down_name,
-                (2560, 640),
-                source_shape=down_shape,
-                offset=expert * down_elements,
-                residency="routed_experts",
-                source_dtype="BF16",
-            )
+        if self._modelopt_experts(source):
+            self._modelopt_routed_experts(prefix, source)
+        else:
+            self._fused_routed_experts(prefix, source)
 
     def ple(self, prefix, source):
         source += ".ple"
@@ -372,7 +419,7 @@ class _Builder:
 def build_model(
     base: SafetensorsSource, *, components: tuple[str, ...] = ("text",)
 ) -> Model:
-    """Build the frozen Qwen4Exp BF16 text-only logical model."""
+    """Build the frozen Qwen4Exp text-only logical model (BF16 or ModelOpt experts)."""
 
     if tuple(components) != ("text",):
         raise ValueError("Qwen4Exp Batch 3A supports only components=('text',)")
