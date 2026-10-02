@@ -2,7 +2,10 @@
 
 #include <cuda_runtime.h>
 
+#include <cstdlib>
+
 #include <cstdio>
+#include <cstring>
 #include <limits>
 #include <new>
 #include <stdexcept>
@@ -23,6 +26,7 @@ void log_cuda_error(const char* op, cudaError_t err) noexcept {
 }
 
 bool is_power_of_two(std::size_t value) { return value != 0 && (value & (value - 1)) == 0; }
+
 
 std::uintptr_t checked_add_uintptr(std::uintptr_t a, std::size_t b) {
     if (b > std::numeric_limits<std::uintptr_t>::max() - a) {
@@ -194,7 +198,9 @@ DeviceArena& DeviceArena::operator=(DeviceArena&& other) noexcept {
 }
 
 DeviceSpan DeviceArena::alloc_bytes(std::size_t bytes, std::size_t align) {
-    if (base_ == nullptr) { throw std::runtime_error("DeviceArena has no backing allocation"); }
+    if (base_ == nullptr) {
+        throw std::runtime_error("DeviceArena has no backing allocation");
+    }
     if (!is_power_of_two(align)) {
         throw std::invalid_argument("arena alignment must be a nonzero power of two");
     }
@@ -212,7 +218,9 @@ DeviceSpan DeviceArena::alloc_bytes(std::size_t bytes, std::size_t align) {
         throw std::overflow_error("arena allocation end offset overflows size_t");
     }
     const std::size_t end = aligned_offset + bytes;
-    if (end > cap_) { throw std::bad_alloc(); }
+    if (end > cap_) {
+        throw std::bad_alloc();
+    }
 
     auto* ptr = static_cast<unsigned char*>(base_) + aligned_offset;
     off_      = end;

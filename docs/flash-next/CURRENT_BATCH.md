@@ -232,3 +232,219 @@ RESUME_COMMAND_INTENT=Resume Flash-Next autonomous roadmap mode from this checkp
 - NEXT_REQUIRED_ACTION=MAIN: review the finalized 3C2a evidence, then commit/push the 10-path 3C2a diff; start the parent 3C2 Qwen4Exp HyperConnection executor batch (still pending) after 3C2a publication
 - DO_NOT_REPEAT=do not re-run the 3C2a GPU tests or re-stop the local-model service; do not modify the 3C2a source/test files further; do not start 3C2 before 3C2a is committed and pushed
 - RESUME_COMMAND_INTENT=Resume Flash-Next autonomous roadmap mode from this checkpoint. Re-run the mandatory fresh Brain handoff, verify this checkpoint against the live worktree/docs, then continue from NEXT_REQUIRED_ACTION. Do not redo completed work unless repository evidence shows it is necessary.
+
+## RESUMPTION CHECKPOINT — Batch 3C2 M1 (2026-09-19)
+
+- TASK=Batch 3C2 milestone M1 (Astra-approved): freeze the bounded HyperConnection
+  executor API/state contract + add the independent numerical-oracle scaffolding /
+  fixtures for later recurrence work (M2/M3). M1 is **API/oracle/docs only**; no
+  kernels, no weight/`linear()` production binding, no shared-runtime expansion,
+  no optimization, no formula changes, no parent integration, and **no production
+  C++ class testing** (that is M2 work).
+- REMOTE_HOST=brain
+- REPOSITORY=/home/toddballinger/ninfer-flash-next
+- BRANCH=flash-next/batch3c-hyperconnection-reference
+- HEAD (base, guard-verified)=8a73b5a6a7030192a5e03ff8eccff66b73f101ba
+- WORKTREE=CLEAN at guard; M1 adds the 3 new files + 2 tracked edits below
+  (six-path M1 scope)
+- M1_FILES:
+  - include/ninfer/ops/hyper_connection_executor.h (bounded executor API +
+    HyperConnectionExecutorState: read / callback / inject / final_mixer /
+    initialize / reset; per-forward readiness lifecycle with token-consistency
+    gate, `prior_read` authority, and **call-bound** module `norm_weight`
+    (block vs final); contract-fixed normalization epsilon `1e-5`)
+  - src/ops/hyper_connection_executor_oracle.h (independent FP64 oracle:
+    initialize / group_rmsnorm / linear_down / linear_up / read_mix /
+    block_inject_logits / inject / read / inject_update / final_mixer, plus the
+    `HcExecutorLifecycle` contract model and the `prior_read` reference check)
+  - tests/ops/linear_add/test_hyper_connection_executor_contract.cpp (CPU-runnable
+    contract/oracle/fixture test with analytically independent, hand-derived
+    references)
+  - tests/ops/linear_add/tests.cmake (register
+    ninfer_hyper_connection_executor_contract_test)
+  - docs/flash-next/HYPERCONNECTION_EXECUTOR_CONTRACT.md (frozen contract doc)
+- FROZEN_CONTRACT (M1):
+  - read -> mixed_input [H,T] + preserved prior_read [CH,T]; read-only hyper;
+    no block-inject logits computed by read.
+  - callback (same stream) -> block [H,T]; block is independent, no alias to
+    hyper state / live scratch; block consumes mixed_input only.
+  - inject -> compute raw block-inject logits (BlockInject(Hn)); apply
+    alpha = 2*sigmoid(raw / hc_count) exactly once; update hyper in place;
+    zero inject logits yield alpha=1.
+  - final_mixer -> no block_inject; collapse four streams to [H,T]; bound to
+    the final mixer's own (call-bound) norm_weight.
+  - per-forward state initializes deterministically (repeat(embedding, C)) and
+    is never silently reused across forwards; read/inject/final_mixer before
+    initialize or after reset are contract errors; a call whose token extent
+    differs from the bound forward T is a contract error, resolved only by
+    reset + re-initialize; reset clears hyper/ready and re-init is fresh.
+  - prior_read (state-owned preserved prior) is the sole authority for the
+    inject reference; externally supplied references are accepted only when
+    they match the state-owned prior exactly (mismatches are contract
+    errors / unsupported).
+  - normalization epsilon is contract-fixed at 1e-5 for every module/call;
+    norm_weight is call-bound and module-owned (block vs final may differ).
+- ORACLE_EVIDENCE (M1, CPU): independent FP64 reference (header-only; no
+  production helper/kernel/linear() helper) on a small well-conditioned
+  geometry (H=8, C=4, R=5; H != T). Fixtures use analytically independent,
+  hand-derived references (distinct streams/tokens, nonzero logits, nonuniform
+  norm weights, identifiable projection entries); exact compare rejects
+  nonfinite operands. Detects missing /C scaling, missing sigmoid, [rows,T]
+  transposition, and broken stream grouping. The `HcExecutorLifecycle`
+  readiness/token-consistency validation is the **contract model only** —
+  M1 does not test the production C++ class (M2 work), and M1 performs **no**
+  production weight/kernel validation (M2/M3 work).
+- VALIDATION (M1, CPU): git diff --check clean; direct binary +
+  ctest -R ninfer_hyper_connection_executor_contract_test pass on CPU;
+  no GPU needed.
+- REMAINING_WORK (next milestone, M2): implement and bind the production
+  `linear()` + 3C1-primitive kernels for read/callback/inject/final_mixer per
+  the contract doc s.8 weight mapping, bind the production
+  HyperConnectionExecutorState (readiness lifecycle, call-bound norm_weight,
+  prior_read authority), and validate it against this M1 oracle (CPU first,
+  then the two-phase GPU handoff per the established policy); M3 then covers
+  recurrence, parent-decoder integration, and GPU numerical validation.
+- DO_NOT_REPEAT: do not implement M2/M3 kernels, run GPU work, or integrate
+  the parent model in M1; do not commit/push (MAIN owns) before M1
+  validation + review; M1 remains API/oracle/docs-only and binds no
+  production weights or class behavior.
+
+
+## R6A REPAIR CHECKPOINT — Batch 3C2 M1 (2026-09-20)
+
+- TASK_ID=3C2A-M1-R6A
+- SOL_ESCALATION_REASON=E1 (two acquired local-worker R6A attempts timed out
+  without source mutation; Sol repaired only the five Astra findings)
+- BASE_GUARD=PASS: origin, branch
+  `flash-next/batch3c-hyperconnection-reference`, HEAD
+  `8a73b5a6a7030192a5e03ff8eccff66b73f101ba`, and exact six-path dirty scope
+  re-verified before mutation
+- LAYOUT_REPAIR=production BF16 `linear()` physical weight layout is frozen as
+  contiguous input lanes per output (`n*K+k`): down `r*CH+j`, up `j*R+r`,
+  inject `c*CH+j`; activation is token-major `t*K+k`. Contract, oracle, and
+  asymmetric offset fixtures now agree.
+- FIXTURE_REPAIR=read/final/inject projections use small signed,
+  nonsaturating weights; injection logits are hand-calculated independently
+  from `block_inject_logits`; the offset test probes distinct nonsymmetric
+  physical slots.
+- LIFECYCLE_REPAIR=initialize is exactly once per forward until reset;
+  consuming calls validate caller T, lifecycle T, supplied-state T/storage,
+  readiness, and prior validity. Negative coverage spans read, inject, and
+  final_mixer; successful inject consumes the pending prior snapshot.
+- PRIOR_REPAIR=`HcState` owns `prior_read` plus validity. Read captures it;
+  inject logits use live hyper while the additive base is the preserved
+  snapshot. A divergence fixture accepts only the matching snapshot and
+  rejects live-hyper/external mismatch.
+- NORM_OWNERSHIP_REPAIR=block and final module structs own their distinct
+  `norm_weight` values; complete modules are call-bound; executor state owns
+  no module weights; contradictory unweighted/state-rebinding wording removed.
+- VALIDATION=`cmake --build build-3c2a --target
+  ninfer_hyper_connection_executor_contract_test -j 4` PASS; direct CPU
+  contract/oracle binary PASS; `ctest --output-on-failure -R
+  ninfer_hyper_connection_executor_contract_test` PASS (1/1);
+  `git diff --check` PASS. No GPU or service action.
+- SCOPE=exact six M1 paths preserved; no production kernels, parent
+  integration, formula changes, commit, or push.
+- REVIEW_STATE=R6A source/contract repair complete; fresh Astra review is
+  required before M2 resumes.
+
+### Batch 3C2 M1 — R7 repair checkpoint (2026-09-20)
+
+Astra R7 findings (contradictory `inject` header equation; circular
+`test_prior_authority` prior-authority divergence assertion) repaired; exact
+six M1 paths and the frozen invariants preserved.
+
+- R7_FINDING_1=`include/ninfer/ops/hyper_connection_executor.h` `inject`
+  doc block re-derived to state unambiguously that the in-place update base
+  is the **state-owned preserved `prior_read`** (the `read`-time snapshot),
+  not the live `hyper`:
+  `hyper[c,h,t] = prior_read[c,h,t] + block[h,t] * alpha[c,t]`. The
+  contradictory `hyper[c,h,t] += block[h,t]*alpha[c,t]` wording and the
+  "sole additive/reference authority" phrasing are removed; block-inject
+  logits remain a function of the live, normalized `hyper`; a missing
+  snapshot is a contract error; an external reference is unsupported unless
+  it matches the state-owned `prior_read` exactly (s.6.3).
+- R7_FINDING_2=`tests/ops/linear_add/test_hyper_connection_executor_contract.cpp`
+  `test_prior_authority` circular prior-authority divergence assertion
+  (which compared two oracle-derived vectors, `via_ref` vs `via_state`,
+  making the check tautological) replaced with an **independently
+  hand-derived** fixture: the `read` snapshot is preserved, the **live
+  `hyper` is then mutated by +7 at a single lane**, and the expected updated
+  state (prior base) plus the live-base substitution are hand-derived from
+  that base (per-stream normalization + inject projection, no oracle
+  `inject`/`logit` helper for the expected value). The successful `inject`
+  must match the independent prior-base expectation and must **not** match
+  the live-base substitution (the +7 lane-0 shift is the observable
+  divergence). Mismatching external live-hyper reference rejection and
+  snapshot consumption are retained.
+- VALIDATION=`cmake --build build-3c2a --target
+  ninfer_hyper_connection_executor_contract_test` PASS; direct CPU
+  contract/oracle binary PASS; `ctest -R
+  ninfer_hyper_connection_executor_contract_test` PASS (1/1); `git
+  diff --check` PASS. No GPU or service action.
+- SCOPE=exact six M1 paths preserved; no production kernels, parent
+  integration, formula changes, commit, or push.
+- REVIEW_STATE=R7 repair complete; the two prior Astra R7 findings are
+  closed; fresh Astra re-review is required before M2 resumes.
+## RESUMPTION CHECKPOINT — M2 handoff / M1 closure (2026-09-21)
+
+- TASK_ID=3C2-M1-ASTRA-CLOSURE-R13-HANDOFF
+- REMOTE_HOST=brain
+- REPOSITORY=/home/toddballinger/ninfer-flash-next
+- BRANCH=flash-next/batch3c-hyperconnection-reference
+- HEAD=8a73b5a6a7030192a5e03ff8eccff66b73f101ba
+- WORKTREE_STATE=DIRTY_EXPECTED — exact six M1 paths preserved; docs-only append to docs/flash-next/CURRENT_BATCH.md
+- MILESTONE=M1 closure: Astra R13 fresh review returns M1 milestone PASS; FRESH_REVIEW_ID=3C2-M1-ASTRA-CLOSURE-20260920-R13
+- R10A=lifecycle tests PASS (read/callback/inject/final_mixer readiness, token-consistency, and prior-authority lifecycle coverage)
+- R10B3=configure/build/direct/CTest all RC=0 (configure=0, build=0, direct=0, ctest -R ninfer_hyper_connection_executor_contract_test=0)
+- R11=evidence labels corrected (oracle/oracle-label vs production-class labeling reconciled; M1 is API/oracle-only, no production-class claims)
+- M1_GATE=CLEAR (M1 milestone gate cleared; M1 is complete and review-closed)
+- NEXT_TASK_ID=3C2-M2-KICKOFF-20260921
+- M2_SCOPE=API/production executor composition only (bind production linear() + 3C1-primitive kernels for read/callback/inject/final_mixer; bind the production HyperConnectionExecutorState; no recurrence, no parent integration, no GPU until M2 CPU validation passes)
+- M2_ALLOWED_MUTATIONS (Sol permit):
+  - src/ops/launcher/hyper_connection_executor.h
+  - src/ops/launcher/hyper_connection_executor.cu
+  - src/ops/wrapper/hyper_connection_executor.cpp
+  - src/ops/basic_sources.cmake
+  - tests/ops/test_hyper_connection_executor.cpp
+  - tests/ops/tests.cmake
+  - tests/ops/linear_add/test_hyper_connection_executor_contract.cpp
+  - docs/flash-next/CURRENT_BATCH.md
+- CPU_VALIDATION=CPU validation is REQUIRED before any GPU work; M2 CPU validation (build + contract/oracle ctest on CPU) must pass before the two-phase GPU handoff
+- GPU_HANDOFF_REQUIRED_LATER=YES
+- GPU_STATE=NO GPU or service action now; M2 CPU validation precedes any GPU window (local worker makes no GPU contact; MAIN owns the two-phase handoff)
+- SERVICE_STATE=ninfer-local-model.service ACTIVE; /v1/models HEALTHY with local-model; ninfer-serve untouched by this documentation task
+- HYGIENE_STATE=git diff --check PASS (no whitespace errors)
+- REVIEW_STATE=M1 closure review (R13) complete; M2 kickoff is next
+- DOCS_UPDATED=docs/flash-next/CURRENT_BATCH.md only (this checkpoint appended); no frozen formulas, no unrelated files touched
+- DO_NOT_REPEAT=do not run GPU work, do not start the M2 GPU window, do not modify 3C2a/M1 source beyond the M2 allowlist, and do not commit or push before M2 CPU validation + fresh review; M1 prior text is preserved as-is above
+- RESUME_COMMAND_INTENT=Resume Flash-Next autonomous roadmap mode from this checkpoint. Re-run the mandatory fresh Brain handoff, verify this checkpoint against the live worktree/docs, then continue from NEXT_TASK_ID=3C2-M2-KICKOFF-20260921. Do not redo completed work unless repository evidence shows it is necessary.
+## RESUMPTION CHECKPOINT — WorkspaceArena amendment + M1 R13 closure (2026-09-21)
+
+- TASK_ID=3C2-M1-WORKSPACEARENA-AMEND-R13
+- REMOTE_HOST=brain
+- REPOSITORY=/home/toddballinger/ninfer-flash-next
+- BRANCH=flash-next/batch3c-hyperconnection-reference
+- HEAD=8a73b5a6a7030192a5e03ff8eccff66b73f101ba
+- WORKTREE_STATE=DIRTY_EXPECTED — exact six M1 paths preserved plus the already-authorized amendment; docs-only append to docs/flash-next/CURRENT_BATCH.md
+- M1_GATE=CLEAR (Astra R13 fresh review returns M1 milestone PASS; M1 complete and review-closed)
+- WORKSPACEARENA_AMENDMENT=approved and applied
+- SIGNATURES=read/inject/final_mixer each take WorkspaceArena& before cudaStream_t
+- WORKSPACE_QUERY=hyper_connection_executor_workspace_capacity_bytes(C,H,R,T)
+- WORKSPACE_FORMULA=max(2*T*(2*C*H+R), 2*T*(C*H+C)) bytes
+- M2_ALLOWED_MUTATIONS (expanded allowlist = original eight paths plus the two amended paths):
+  - src/ops/launcher/hyper_connection_executor.h
+  - src/ops/launcher/hyper_connection_executor.cu
+  - src/ops/wrapper/hyper_connection_executor.cpp
+  - src/ops/basic_sources.cmake
+  - tests/ops/test_hyper_connection_executor.cpp
+  - tests/ops/tests.cmake
+  - tests/ops/linear_add/test_hyper_connection_executor_contract.cpp
+  - docs/flash-next/CURRENT_BATCH.md
+  - include/ninfer/ops/hyper_connection_executor.h
+  - docs/flash-next/HYPERCONNECTION_EXECUTOR_CONTRACT.md
+- CPU_VALIDATION=CPU validation REQUIRED before any GPU handoff; no GPU/service/commit/push yet
+- GPU_HANDOFF_REQUIRED_LATER=YES (M2 CPU validation precedes any two-phase GPU handoff)
+- DOCS_UPDATED=docs/flash-next/CURRENT_BATCH.md only (this checkpoint appended); no source/tests/CMake/oracle touched; no frozen formulas changed
+- DO_NOT_REPEAT=no GPU window, no commit/push, no M1 source edits outside the amended allowlist
+- RESUME_COMMAND_INTENT=Continue after M2 CPU validation passes; re-verify this checkpoint against the live worktree/docs before resuming autonomous Flash-Next roadmap mode.

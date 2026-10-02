@@ -141,3 +141,16 @@ include("${CMAKE_CURRENT_LIST_DIR}/linear/tests.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/linear_add/tests.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/linear_pair/tests.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/linear_swiglu/tests.cmake")
+# Batch 3C2 / M2: CPU/static validation of the production HyperConnection
+# executor lifecycle + documented workspace-capacity geometry (non-GPU).
+ninfer_add_op_test(ninfer_hyper_connection_executor_cpu_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_hyper_connection_executor.cpp"
+  LIBRARIES ninfer_ops)
+
+# Batch 3C2 / M2: dedicated GPU-capable HyperConnection *executor* test.
+# Exercises the real M2 public path (initialize -> read -> callback -> inject
+# -> final_mixer) over device BF16 tensors/weights with a real CUDA stream;
+# does not exercise the legacy 3C1 hyper_connection primitives directly.
+ninfer_add_op_test(ninfer_hyper_connection_executor_gpu_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_hyper_connection_executor_gpu.cpp"
+  LIBRARIES ninfer_ops)
