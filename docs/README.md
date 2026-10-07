@@ -36,6 +36,7 @@ installed NInfer API documentation:
 - [NInfer6000 reuse plan](flash-next/NINFER6000_REUSE_PLAN.md) — reuse-first architecture and project boundary.
 - [NInfer6000 reconciliation report](flash-next/NINFER6000_RECONCILIATION_REPORT.md) — common-base evidence, semantic differences, upstream commit bands and staged integration plan.
 - [Upstream reuse ledger](flash-next/UPSTREAM_REUSE_LEDGER.md) — adopt/benchmark/local/defer classification and handoff checklist.
+- [NInfer6000 port manifest](flash-next/NINFER6000_PORT_MANIFEST.md) — preferred related-history merge strategy, source groups, correctness gates and OpenClaw handoff outputs.
 - [Current Batch state](flash-next/CURRENT_BATCH.md) — branch-specific Batch 3C execution evidence where present.
 
 ## Repository-local guides
